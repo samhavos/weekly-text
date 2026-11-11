@@ -26,11 +26,11 @@ test('network failures are visible', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'Edit names' })).toBeVisible();
 });
 
-test('malformed CSV failures are visible', async ({ page, github }) => {
-  github.respond({ body: 'date,name\n2026-10-05,"not closed' });
-  await page.goto('?repo=org/sprints&refresh=0');
-  await expect(page.getByRole('heading', { name: /Invalid CSV/ })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Edit names' })).toBeVisible();
+test('malformed CSV quoting still renders every row', async ({ page, github }) => {
+  github.respond({ body: 'date,name\n2026-09-28,"Not closed\n2026-10-05,Say "Hi" Sprint\n' });
+  await page.goto('?repo=org/sprints&now=2026-10-05&refresh=0');
+  await expect(page.getByRole('heading', { name: 'Say "Hi" Sprint', exact: true })).toBeVisible();
+  await expect(page.locator('.history li')).toHaveText(['"Not closed']);
 });
 
 test('GitHub requests and edit links are encoded without leaking the dummy token', async ({ page, github }) => {
@@ -103,7 +103,60 @@ test('a later failed fetch preserves the last good data and warns', async ({ pag
   await expect.poll(() => warnings.join('\n')).toContain('refresh failed; keeping the last good data.');
   await expect(page.getByRole('heading', { name: 'Friday Deploy' })).toBeVisible();
   await expect(page.locator('.history li')).toHaveText(['Merge Conflict', 'Bugs Bunny']);
+  await expect(page.locator('.notice')).toHaveCount(0);
 });
+
+test('a later auth failure shows a hint over the last good data until a fetch succeeds', async ({ page, github }) => {
+  await page.clock.install();
+  await page.goto('?repo=org/sprints&now=2026-10-05&refresh=1');
+  await expect(page.getByRole('heading', { name: 'Friday Deploy' })).toBeVisible();
+  github.respond({ body: '', status: 401 });
+  await page.clock.fastForward(60_000);
+  const notice = page.locator('.notice');
+  await expect(notice).toContainText("Couldn't load sprint names (HTTP 401).");
+  await expect(notice).toContainText('The token is invalid or expired.');
+  await expect(page.getByRole('heading', { name: 'Friday Deploy' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Edit names' })).toBeVisible();
+  github.respond({ body: '', status: 503 });
+  await page.clock.fastForward(60_000);
+  await expect.poll(() => github.requests.length).toBe(3);
+  await expect(notice).toContainText('HTTP 401');
+  github.respond({ body: sampleCsv });
+  await page.clock.fastForward(60_000);
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Friday Deploy' })).toBeVisible();
+});
+
+test('cached data on reload still shows an expired-token hint', async ({ page, github }) => {
+  await page.goto('?repo=org/sprints&now=2026-10-05&refresh=0');
+  await expect.poll(() => page.evaluate(() => Object.values(localStorage))).toEqual([sampleCsv]);
+  github.respond({ body: '', status: 401 });
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Friday Deploy' })).toBeVisible();
+  await expect(page.locator('.notice')).toContainText('The token is invalid or expired.');
+});
+
+for (const viewport of [{ width: 1200, height: 700 }, { width: 250, height: 120 }]) {
+  test(`the error notice stays compact and clear of the edit link at ${viewport.width}x${viewport.height}`,
+    async ({ page, github }) => {
+      await page.setViewportSize(viewport);
+      await page.goto('?repo=org/sprints&now=2026-10-05&refresh=0');
+      await expect.poll(() => page.evaluate(() => Object.values(localStorage))).toEqual([sampleCsv]);
+      github.respond({ body: '', status: 403, headers: { 'x-ratelimit-remaining': '10' } });
+      await page.reload();
+      await expect(page.locator('.notice')).toBeVisible();
+      const notice = await page.locator('.notice').boundingBox();
+      const link = await page.getByRole('link', { name: 'Edit names' }).boundingBox();
+      if (!notice || !link) throw new Error('Expected the notice and edit link to render.');
+      expect(notice.height).toBeLessThanOrEqual(2 * 18 + 8);
+      expect(notice.x).toBeGreaterThanOrEqual(0);
+      expect(notice.x + notice.width).toBeLessThanOrEqual(viewport.width);
+      const overlaps = notice.x < link.x + link.width && link.x < notice.x + notice.width
+        && notice.y < link.y + link.height && link.y < notice.y + notice.height;
+      expect(overlaps).toBe(false);
+      await expect(page.locator('.notice')).toHaveAttribute('title', /lacks access/);
+    });
+}
 
 test('a failed initial fetch recovers on the next poll', async ({ page, github }) => {
   await page.clock.install();

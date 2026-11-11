@@ -5,20 +5,23 @@ export interface SprintRow {
   name: string;
 }
 
-export class CsvError extends Error {
-  constructor(line: number, detail: string) {
-    super(`Invalid CSV near line ${line}: ${detail}`);
-    this.name = 'CsvError';
-  }
-}
-
+/**
+ * RFC 4180 parser that never throws, so one bad hand edit can't blank the board.
+ * Well-formed input parses exactly per RFC 4180. Malformed quoting is kept as
+ * literal text: stray quotes in unquoted fields, text after a closing quote,
+ * and opening quotes that are never properly closed.
+ */
 export function parseCsv(text: string): string[][] {
   const input = text.replace(/^\uFEFF/, '');
   const records: string[][] = [];
+  const literalQuotes = new Set<number>();
   let record: string[] = [];
   let field = '';
-  let state: 'start' | 'plain' | 'quoted' | 'closed' = 'start';
-  let line = 1;
+  let state: 'start' | 'plain' | 'quoted' = 'start';
+  let quoteStart = 0;
+
+  const endsField = (index: number) => index >= input.length
+    || input[index] === ',' || input[index] === '\r' || input[index] === '\n';
 
   const finishField = () => {
     record.push(field);
@@ -26,20 +29,28 @@ export function parseCsv(text: string): string[][] {
     state = 'start';
   };
 
-  for (let i = 0; i < input.length; i++) {
+  for (let i = 0; i <= input.length; i++) {
     const char = input[i];
     if (state === 'quoted') {
-      if (char === '"') {
-        if (input[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          state = 'closed';
-        }
+      const closes = char === '"' && input[i + 1] !== '"';
+      // A quote left open by mistake would otherwise pair with the next quote in
+      // the file and swallow every row in between. Treat it as literal text and
+      // reparse from there. Committed records never change while quoted.
+      if (i === input.length || (closes && !endsField(i + 1) && /[\r\n]/.test(field))) {
+        literalQuotes.add(quoteStart);
+        field = '';
+        state = 'start';
+        i = quoteStart - 1;
+      } else if (closes) {
+        state = 'plain';
+      } else if (char === '"') {
+        field += '"';
+        i++;
       } else {
         field += char;
-        if (char === '\n') line++;
       }
+    } else if (i === input.length) {
+      break;
     } else if (char === ',') {
       finishField();
     } else if (char === '\r' || char === '\n') {
@@ -47,20 +58,15 @@ export function parseCsv(text: string): string[][] {
       records.push(record);
       record = [];
       if (char === '\r' && input[i + 1] === '\n') i++;
-      line++;
-    } else if (char === '"' && state === 'start') {
+    } else if (char === '"' && state === 'start' && !literalQuotes.has(i)) {
       state = 'quoted';
-    } else if (state === 'closed') {
-      throw new CsvError(line, 'unexpected text after a closing quote.');
-    } else if (char === '"') {
-      throw new CsvError(line, 'a quote inside an unquoted field must be escaped.');
+      quoteStart = i;
     } else {
       field += char;
       state = 'plain';
     }
   }
 
-  if (state === 'quoted') throw new CsvError(line, 'a quoted field is not closed.');
   if (field !== '' || record.length > 0 || state !== 'start') {
     finishField();
     records.push(record);

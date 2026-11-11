@@ -80,10 +80,21 @@ export default function App({ config }: { config: Config }) {
           <a href="?demo=1&amp;now=2026-10-05">Preview with sample names</a>
         </Message>
       ) : view ? (
-        <Names view={view} />
+        <>
+          <Names view={view} />
+          {error instanceof GitHubError && (
+            <p className="notice" role="status" title={`${error.message} ${error.hint}`}>
+              {error.message} {error.hint} Showing the last loaded names.
+            </p>
+          )}
+        </>
       ) : error ? (
         <Message title={error.message}>
-          <p>{error instanceof GitHubError ? error.hint : 'Check your connection or CSV file and try again.'}</p>
+          <p>
+            {error instanceof GitHubError ? error.hint
+              : config.refreshMs > 0 ? 'The app will retry on its next refresh.'
+                : 'Reload the panel to try again.'}
+          </p>
         </Message>
       ) : (
         <Message title="Loading sprint names..." />

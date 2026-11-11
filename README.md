@@ -85,7 +85,8 @@ date,name
   is the name. Extra columns are ignored.
 - Names are trimmed. Invalid dates and empty names are skipped, as are headers
   and blank lines. Quoted commas, escaped quotes (`""`), multiline fields,
-  LF/CRLF, and a UTF-8 BOM are supported. Malformed quoting is reported.
+  LF/CRLF, and a UTF-8 BOM are supported. Malformed quoting never breaks the
+  board: stray or unclosed quotes are shown as literal text.
 - Order does not matter. The last valid row for a duplicate date wins.
 - The newest row dated today or earlier is current for seven calendar days
   by default. After that, the display shows `???`; that row moves into history.
@@ -127,7 +128,9 @@ changing behavior. Nonzero `refresh` values must be between one second
 Fetching uses GitHub's raw Contents API and browser cache revalidation. The
 last good CSV is cached in `localStorage` by repo/ref/path, **never by token**.
 Blocked iframe storage does not prevent the app from working. Later fetch
-failures retain the last good data and warn in the console. An initial failure
+failures retain the last good data and warn in the console; HTTP 4xx errors
+(such as an expired token) also show a small notice with the hint, even over
+cached data, until a fetch succeeds. An initial failure
 shows an HTTP-specific hint; the edit link remains available. A refresh also
 retries after first-load errors. With `refresh=0`, only the initial request
 runs; reload to retry.

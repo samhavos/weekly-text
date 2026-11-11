@@ -17,11 +17,13 @@ export function editUrl({ repo, path, ref }: Source): string {
 }
 
 export class GitHubError extends Error {
+  readonly status: number;
   readonly hint: string;
 
   constructor(status: number, rateLimited: boolean) {
     super(`Couldn't load sprint names (HTTP ${status}).`);
     this.name = 'GitHubError';
+    this.status = status;
     switch (status) {
       case 401:
         this.hint = 'The token is invalid or expired. Update the token in the panel URL.';
@@ -37,6 +39,11 @@ export class GitHubError extends Error {
       default:
         this.hint = 'GitHub may be temporarily unavailable. The app will retry on its next refresh.';
     }
+  }
+
+  /** Client errors (bad token, no access, wrong path, rate limit) that viewers should see. */
+  get needsAttention(): boolean {
+    return this.status >= 400 && this.status < 500;
   }
 }
 

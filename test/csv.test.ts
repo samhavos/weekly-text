@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CsvError, parseCsv, parseSprints } from '../src/csv.ts';
+import { parseCsv, parseSprints } from '../src/csv.ts';
 import { parseLocalDate } from '../src/dates.ts';
 
 test('CSV supports BOM, CRLF, quoted commas, escaped quotes, and extra fields', () => {
@@ -49,10 +49,25 @@ test('rows are sorted and the last valid row for a date wins', () => {
   assert.deepEqual(rows.map((row) => row.name), ['Replacement', 'Later']);
 });
 
-test('malformed quoted CSV is reported, not silently rendered', () => {
-  for (const input of ['"unclosed', 'a,b"c', '"a"x,b']) {
-    assert.throws(() => parseCsv(input), CsvError);
-  }
+test('malformed quoting is kept as literal text instead of failing the file', () => {
+  assert.deepEqual(parseCsv('a,b"c'), [['a', 'b"c']]);
+  assert.deepEqual(parseCsv('"a"x,b'), [['ax', 'b']]);
+  assert.deepEqual(parseCsv('"unclosed'), [['"unclosed']]);
+  assert.deepEqual(parseCsv('"a""'), [['"a""']]);
+  assert.deepEqual(parseCsv('a,"'), [['a', '"']]);
+  assert.deepEqual(parseSprints('date,name\n2026-09-21,The "Best" Sprint\n2026-09-28,Fine\n')
+    .map((row) => row.name), ['The "Best" Sprint', 'Fine']);
+});
+
+test('an unclosed quote does not swallow later rows', () => {
+  const rows = parseSprints('date,name\n'
+    + '2026-10-05,"Forgot the closing quote\n'
+    + '2026-10-12,Plain\n'
+    + '2026-10-19,"Quoted, Properly"\n'
+    + '2026-10-26,"Also unclosed\n');
+  assert.deepEqual(rows.map((row) => row.name), [
+    '"Forgot the closing quote', 'Plain', 'Quoted, Properly', '"Also unclosed',
+  ]);
 });
 
 test('names remain plain text, including HTML-looking content', () => {

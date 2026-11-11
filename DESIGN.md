@@ -58,6 +58,10 @@ date,name
   - quoted fields and `""` escapes;
   - CRLF and LF line endings;
   - a leading UTF-8 BOM.
+
+  Malformed quoting never fails the file: stray quotes are kept as literal
+  text, and an opening quote that is never properly closed is treated as a
+  literal character so it can't swallow later rows.
 - **What editors see:** GitHub shows the CSV as a searchable table and warns
   when a row is malformed, which gives people some validation for free.
 
@@ -266,7 +270,7 @@ All of these are small, muted and centred, never a full-screen error:
 |-------------------------------|---------------------------------------------------------------------------------|
 | `repo` missing                | A short setup hint listing the params.                                          |
 | First fetch fails             | `Couldn't load sprint names (HTTP 401)`, plus a hint for the status code (below). |
-| Later fetch fails             | Keep showing the last good data and log a `console.warn`.                       |
+| Later fetch fails             | Keep showing the last good data and log a `console.warn`. For HTTP 4xx (e.g. expired token), also show a small notice with the hint until a fetch succeeds. |
 | CSV has no valid rows         | Current = `???`, no history.                                                    |
 
 Hints by status code:
@@ -349,10 +353,10 @@ README.md             # setup: data repo, PAT, deployment, Grafana embed snippet
 
 The app is implemented. See README.md for local setup, query parameters, and
 deployment instructions. Invalid query parameters are reported explicitly;
-malformed CSV quoting is an error rather than silently accepting broken data.
+malformed CSV quoting is parsed leniently (§2.1) rather than failing the board.
 Nonzero refresh intervals are constrained to one second through the browser's
 maximum timer delay. Requests time out after 30 seconds; later failures keep
-the last good data.
+the last good data, with a small notice for HTTP 4xx errors (§5.5).
 
 ### 7.3 Sub-path safety
 
@@ -449,7 +453,8 @@ access; local production builds can be checked with `npm run build`.
   browser contexts are isolated, so no real tokens or existing storage are used.
   Coverage includes responsive layout and asset URLs, long-name fitting, text
   escaping, hidden future names, themes/iframe color schemes, query options,
-  edit links, status-specific errors, token hygiene, cached/blocked storage,
+  edit links, status-specific errors and notices over cached data, lenient
+  CSV quoting, token hygiene, cached/blocked storage,
   refresh recovery, unchanged-view DOM stability, timeout, local-midnight
   rollover, and visibility-triggered updates. Fake clocks avoid long waits;
   failure traces and screenshots go in ignored `test-results/`.

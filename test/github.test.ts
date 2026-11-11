@@ -35,18 +35,19 @@ test('fetch uses raw CSV, revalidation, optional bearer auth, and an abort signa
 });
 
 test('HTTP errors distinguish invalid tokens, access, missing files, and rate limits', async (t) => {
-  for (const [status, remaining, pattern] of [
-    [401, '10', /invalid or expired/],
-    [403, '0', /rate limit/],
-    [403, '10', /lacks access/],
-    [404, '10', /repo, path, and ref/],
-    [500, '10', /temporarily unavailable/],
+  for (const [status, remaining, pattern, needsAttention] of [
+    [401, '10', /invalid or expired/, true],
+    [403, '0', /rate limit/, true],
+    [403, '10', /lacks access/, true],
+    [404, '10', /repo, path, and ref/, true],
+    [500, '10', /temporarily unavailable/, false],
   ] as const) {
     t.mock.method(globalThis, 'fetch', async () => new Response('', {
       status, headers: { 'x-ratelimit-remaining': remaining },
     }));
     await assert.rejects(fetchCsv(parseConfig('?repo=org/repo'), new AbortController().signal),
-      (error: unknown) => error instanceof GitHubError
+      (error: unknown) => error instanceof GitHubError && error.status === status
+        && error.needsAttention === needsAttention
         && error.message.includes(`HTTP ${status}`) && pattern.test(error.hint));
     t.mock.restoreAll();
   }

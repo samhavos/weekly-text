@@ -4,7 +4,7 @@ import { parseSprints } from './csv.ts';
 import type { SprintRow } from './csv.ts';
 import { computeView, sameView } from './schedule.ts';
 import type { SprintView } from './schedule.ts';
-import { fetchCsv } from './github.ts';
+import { fetchCsv, GitHubError } from './github.ts';
 import { readCache, writeCache } from './cache.ts';
 import { demoCsv } from './demo.ts';
 
@@ -17,13 +17,7 @@ function initialRows(config: Config): SprintRow[] | null {
   if (config.demo) return parseSprints(demoCsv);
   if (!config.repo) return null;
   const cached = readCache(config);
-  if (cached === null) return null;
-  try {
-    return parseSprints(cached);
-  } catch {
-    console.warn('Sprint names: cached CSV is malformed; fetching a fresh copy.');
-    return null;
-  }
+  return cached === null ? null : parseSprints(cached);
 }
 
 export function useSprints(config: Config): LoadState {
@@ -41,12 +35,16 @@ export function useSprints(config: Config): LoadState {
     let lastFetch = 0;
     let controller: AbortController | null = null;
 
-    const recompute = () => {
+    const recompute = (fetched = false) => {
       if (rows === null) return;
       const view = computeView(rows, config.now ?? new Date(), config);
-      setState((previous) => previous.view && sameView(previous.view, view) && !previous.error
-        ? previous
-        : { view, error: null });
+      setState((previous) => {
+        // Only a successful fetch clears a GitHub error; clock-driven recomputes keep it.
+        const error = fetched ? null : previous.error;
+        return previous.view && sameView(previous.view, view) && previous.error === error
+          ? previous
+          : { view, error };
+      });
     };
 
     const refresh = async () => {
@@ -63,15 +61,22 @@ export function useSprints(config: Config): LoadState {
         const nextRows = parseSprints(text);
         if (!active) return;
         rows = nextRows;
-        recompute();
+        recompute(true);
         writeCache(config, text);
       } catch (error) {
         if (!active) return;
         const failure = error instanceof Error ? error : new Error("Couldn't load sprint names.");
-        if (rows !== null) {
-          console.warn('Sprint names: refresh failed; keeping the last good data.', failure.message);
-        } else {
+        if (rows === null) {
           setState({ view: null, error: failure });
+          return;
+        }
+        console.warn('Sprint names: refresh failed; keeping the last good data.', failure.message);
+        // Transient failures stay silent, but e.g. an expired token must be visible
+        // even when cached or earlier names are still on screen.
+        if (failure instanceof GitHubError && failure.needsAttention) {
+          setState((previous) => previous.error?.message === failure.message
+            ? previous
+            : { ...previous, error: failure });
         }
       } finally {
         clearTimeout(timeout);
@@ -80,7 +85,7 @@ export function useSprints(config: Config): LoadState {
     };
 
     void refresh();
-    const rolloverTimer = setInterval(recompute, 60_000);
+    const rolloverTimer = setInterval(() => recompute(), 60_000);
     const refreshTimer = !config.demo && config.refreshMs > 0
       ? setInterval(() => { void refresh(); }, config.refreshMs)
       : null;
