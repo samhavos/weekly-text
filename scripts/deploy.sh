@@ -57,6 +57,7 @@ fi
 git reset --hard main
 
 # Produce a fresh build so the deploy branch contains exactly what Vite outputs.
+npx --no-install tsc --noEmit
 npx --no-install vite build --base=./ --outDir docs --emptyOutDir
 
 # Confirm the build succeeded.

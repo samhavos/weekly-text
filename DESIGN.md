@@ -17,7 +17,8 @@ them on github.com. All fetching and rendering happens in the browser.
 - Show `???` when no name has been set for the current period.
 - Show a link straight to the GitHub edit page for the CSV.
 - Configure everything through query parameters, so embedding is just one URL.
-- Pure client-side JS with no runtime dependencies and no backend.
+- Pure client-side rendering with no backend. React and React DOM are the only
+  runtime libraries (an implementation-time choice for ease of iteration).
 - Work when served from any sub-path (the deployment is
   `https://samhavos.github.io/weekly-text/`).
 - Nice to have: update in place (new data, week rollover) without a reload.
@@ -299,40 +300,59 @@ All CSV text is inserted with `textContent`, never `innerHTML`.
 
 ### 7.1 Stack
 
-Vanilla JS (ES modules), HTML and CSS. **Zero runtime dependencies.** Use
-**Vite as a development/build dependency**, with npm and a committed
-`package-lock.json`. The copied deployment workflow invokes Vite directly, so
-this replaces the earlier dependency-free copy-build plan and commits the
-project to Vite unless that workflow is deliberately replaced. No framework
-or runtime library is needed.
+React with TypeScript (ES modules), HTML and CSS. React was chosen during
+implementation for ease of understanding and iteration; React and React DOM
+are the only runtime dependencies. There is no router, UI kit, or state library.
+Use **Vite as a development/build dependency**, with npm and a committed
+`package-lock.json`. TypeScript checks run before production builds, including
+in the deployment script. Node.js 22.18+ (or 24+) runs the TypeScript unit tests
+directly without a separate test framework or transpiler.
 
 ### 7.2 Repository layout
 
 ```
-index.html            # loads ./src/main.js and ./src/style.css (relative paths only)
-vite.config.js        # base: "./", build.outDir: "docs"
+index.html            # loads ./src/main.tsx (relative paths only)
+vite.config.ts        # base: "./", build.outDir: "docs"
+tsconfig.json         # strict type checks for app, tests, and build config
 src/
-  main.js             # bootstrap, timers, cache
-  config.js           # query param parsing + validation
-  github.js           # contents API fetch, error → hint mapping, edit URL
-  csv.js              # RFC 4180 parser + row extraction (date/name)
-  schedule.js         # pure computeView()
-  render.js           # DOM updates, fit-text, edit link
+  main.tsx            # bootstrap and configuration errors
+  App.tsx             # React wallboard, fit-text, edit link, setup/errors
+  useSprints.ts       # fetch lifecycle, timers, cached startup, stable updates
+  config.ts           # query param parsing + validation
+  github.ts           # contents API fetch, error → hint mapping, edit URL
+  csv.ts              # RFC 4180 parser + row extraction (date/name)
+  dates.ts            # strict local dates and DST-safe calendar arithmetic
+  schedule.ts         # pure computeView()
+  cache.ts            # guarded localStorage, token-free keys
+  demo.ts             # fixed sample CSV for previews
   style.css
 test/
-  schedule.test.js    # node:test (built-in), covers §3 incl. stale, ties, DST
-  csv.test.js         # quoting, CRLF, BOM, junk/header rows, date parsing
+  schedule.test.ts    # node:test (built-in), covers §3 incl. stale, ties, DST
+  csv.test.ts         # quoting, CRLF, BOM, junk/header rows, date parsing
+  config.test.ts      # defaults and validation
+  github.test.ts      # URLs, request headers, status/error hints
+  cache.test.ts       # source isolation, token exclusion, blocked storage
+e2e/
+  fixtures.ts         # isolated Playwright contexts and mocked GitHub API
+  wallboard.spec.ts   # layout, assets, fitting, themes, setup, query options
+  github.spec.ts      # errors, auth/cache hygiene, refresh, rollover, visibility
+playwright.config.ts  # Chromium projects for root and /weekly-text/ builds
 scripts/
   deploy.sh           # builds main into docs/, pushes origin/deploy, restores branch
 docs/                 # generated Vite output; ignored on source branches
-sprints.example.csv   # starter file for the data repo
+examples/
+  sprints.csv         # starter file for the data repo
 package.json          # Vite dev/build/preview scripts, "test": "node --test"
 package-lock.json     # pins build dependencies; install with npm ci
 README.md             # setup: data repo, PAT, deployment, Grafana embed snippet
 ```
 
-The app and npm/Vite files above are planned; currently the repo contains this
-design and the deployment script, not a buildable app.
+The app is implemented. See README.md for local setup, query parameters, and
+deployment instructions. Invalid query parameters are reported explicitly;
+malformed CSV quoting is an error rather than silently accepting broken data.
+Nonzero refresh intervals are constrained to one second through the browser's
+maximum timer delay. Requests time out after 30 seconds; later failures keep
+the last good data.
 
 ### 7.3 Sub-path safety
 
@@ -383,6 +403,8 @@ no `X-Frame-Options` header, so framing is allowed.
   Fetching does **not** pull or merge `origin/main`: update local `main`
   yourself first if needed. Changes present only on another branch are not
   deployed.
+- **Type safety:** the script runs `npx --no-install tsc --noEmit` before Vite,
+  matching the checks in `npm run build`.
 - **Publish:** verify `docs/index.html`, add `docs/.nojekyll` to bypass Jekyll,
   force-add the ignored `docs/` output, commit it, and push `deploy` to
   `origin` using `--force-with-lease`. The branch contains the source snapshot
@@ -404,8 +426,8 @@ no `X-Frame-Options` header, so framing is allowed.
 The script has no repo-specific remote URL or project-path constant: `origin`
 already points at `samhavos/weekly-text`, and the relative base handles the
 project path. No custom GitHub Actions deployment workflow is required for
-this branch-publishing approach. A real build and live deployment can only be
-verified once the planned app and its Vite dependency exist.
+this branch-publishing approach. A live deployment still requires running the publishing script with push
+access; local production builds can be checked with `npm run build`.
 
 ## 8. Testing
 
@@ -419,13 +441,20 @@ verified once the planned app and its Vite dependency exist.
 - **Unit tests** for the GitHub URLs: the API URL and edit URL built from
   `repo`/`path`/`ref`, including paths with sub-directories and special
   characters.
+- **Browser regression tests** live in `e2e/`; do not run them as ad hoc browser
+  scripts. Run `npx playwright install chromium` once, then `npm run test:e2e`.
+  The command builds and type-checks the app and runs Chromium against the
+  production output at both `/` and `/weekly-text/`. Playwright owns the two
+  preview servers and stops them when done. GitHub responses are mocked and
+  browser contexts are isolated, so no real tokens or existing storage are used.
+  Coverage includes responsive layout and asset URLs, long-name fitting, text
+  escaping, hidden future names, themes/iframe color schemes, query options,
+  edit links, status-specific errors, token hygiene, cached/blocked storage,
+  refresh recovery, unchanged-view DOM stability, timeout, local-midnight
+  rollover, and visibility-triggered updates. Fake clocks avoid long waits;
+  failure traces and screenshots go in ignored `test-results/`.
 - **Manual checks**:
-  - `demo=1&now=…` to step through weeks;
-  - narrow/wide/short panel sizes;
-  - long names;
   - dark/light Grafana themes (checking for the opaque backdrop gotcha);
-  - production `docs/` served at `/` and under `/weekly-text/`, including
-    successful JS/CSS loads;
   - against a real private repo with a fine-grained PAT, including an expired
     or revoked token.
 
@@ -447,4 +476,4 @@ verified once the planned app and its Vite dependency exist.
 
 - A GitHub Action in the data repo that validates the CSV on PRs and pushes:
   every row parses, there are no duplicate dates, and it warns if nothing is
-  queued for next Monday. It could reuse `src/csv.js`.
+  queued for next Monday. It could reuse `src/csv.ts`.

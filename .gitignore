@@ -4,6 +4,10 @@ node_modules/
 # Build output (Github pages quirk)
 docs/
 
+# Browser test output
+test-results/
+playwright-report/
+
 # Editor state
 .vscode/
 .idea/
